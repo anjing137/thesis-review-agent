@@ -189,6 +189,8 @@ class PaperAnalyzer:
             if '学年论文' in line or '毕业论文' in line:
                 for j in range(i+1, min(i+5, len(lines))):
                     candidate = re.sub(r'[\*#]+', '', lines[j]).strip()
+                    # 清理常见前缀
+                    candidate = re.sub(r'^(?:题目|标题)[:：]\s*', '', candidate)
                     # 过滤掉无效内容
                     if candidate and len(candidate) > 10:
                         # 排除常见的非题目内容

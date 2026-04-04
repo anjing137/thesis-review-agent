@@ -88,26 +88,26 @@ class ReportGenerator:
             md.append(f"- **标题字数**：{basic_stats.get('title_word_count')}字 {'✅' if basic_stats.get('title_word_count_ok') else '❌'}")
         md.append("")
 
-        # === 字数统计（LLM辅助）===
-        md.append("## 字数统计（LLM辅助）\n")
+        # === 字数统计 ===
+        md.append("## 字数统计\n")
         llm_used = basic_stats.get('llm_used', False)
+        word_count = basic_stats.get('word_count', 0)
         if llm_used:
             # LLM已统计
             llm_body = basic_stats.get('llm_body_count', 0)
             llm_abs = basic_stats.get('llm_abstract_count', 0)
-            md.append(f"**正文字数**：{llm_body}字 | 要求：≥8000字 | {'✅' if llm_body >= 8000 else '❌'}")
-            md.append(f"**摘要字数**：{llm_abs}字 | 要求：300-500字 | {'✅' if 300 <= llm_abs <= 500 else '❌'}")
+            md.append(f"**正文字数**：{llm_body}字（LLM精确统计）| 要求：≥8000字 | {'✅' if llm_body >= 8000 else '❌'}")
+            md.append(f"**摘要字数**：{llm_abs}字（LLM统计）| 要求：300-500字 | {'✅' if 300 <= llm_abs <= 500 else '❌'}")
+        elif word_count >= 8000:
+            # 字数已足够，无需LLM
+            md.append(f"**正文字数**：{word_count}字 | 要求：≥8000字 | ✅")
+            md.append(f"**摘要字数**：需AI评价时检查 | 要求：300-500字")
         else:
-            # 需要LLM统计
-            md.append(f"**正文字数（正则）**：{basic_stats.get('word_count', 0)}字 | 要求：≥8000字 | {'✅' if basic_stats.get('word_count_ok') else '❌（接近临界，需LLM精确统计）'}")
-            md.append(f"**摘要字数**：待LLM统计 | 要求：300-500字")
+            # 字数不足，需要LLM统计
+            md.append(f"**正文字数（正则）**：{word_count}字 | 要求：≥8000字 | ❌")
+            md.append(f"**摘要字数**：需AI评价时检查 | 要求：300-500字")
             md.append("")
-            md.append("**【请Claude完成】**：请读取论文markdown文件，使用以下提示词进行字数统计\n")
-            md.append("```")
-            md.append("请阅读论文，识别摘要和正文范围并标记：")
-            md.append("【摘要】...【摘要结束】")
-            md.append("【正文内容】...【正文内容结束】")
-            md.append("```")
+            md.append("**【AI评价时完成】**：字数统计由AI在评价过程中完成")
         md.append("")
         md.append("---\n")
 
