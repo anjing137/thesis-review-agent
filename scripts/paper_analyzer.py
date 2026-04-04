@@ -854,26 +854,18 @@ class PaperAnalyzer:
             print("🔍 开始模型设定分析...")
             model_analyzer = ModelSpecAnalyzer(content, paper_type)
             ms_result = model_analyzer.analyze()
-            # 检测缺失控制变量
-            missing_controls = model_analyzer.check_missing_controls()
-            ms_result.missing_control_issues = missing_controls
             model_spec_result = model_spec_to_dict(ms_result)
 
             print(f"   提取变量数：{len(ms_result.variables)}")
             print(f"   提取公式数：{len(ms_result.formulas)}")
             print(f"   提取因果链：{len(ms_result.causal_chains)}")
             if ms_result.extraction_confidence < 0.6:
-                print(f"   💡 Python提取受限，AI评价时将深度分析变量和因果链")
+                print(f"   💡 Python提取受限，AI评价时将深度分析变量、因果链及控制变量完整性")
 
             if ms_result.over_control_issues:
                 print(f"   ⚠️ 过度控制问题：{len(ms_result.over_control_issues)}处")
                 for issue in ms_result.over_control_issues:
                     print(f"      - {issue.mediator_var}（{issue.severity}）")
-
-            if missing_controls:
-                print(f"   ⚠️ 缺失控制变量：{len(missing_controls)}处")
-                for ctrl in missing_controls[:3]:
-                    print(f"      - {ctrl}")
 
             print()
 
