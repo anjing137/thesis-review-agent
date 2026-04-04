@@ -54,17 +54,20 @@ pip install python-docx
 
 ## 快速上手（Quick Start）
 
-### 1. 分析单篇论文
+### 1. 分析单篇论文并生成报告骨架
 
 ```bash
-python3 main.py "path/to/your/paper.docx"
+python3 main.py "path/to/paper.docx" --report -o ./reviews
 ```
+
+输出：
+- `paper.md` - 论文markdown全文
+- `paper_评价报告_骨架.md` - AI填充用报告骨架
 
 输出示例：
 
 ```
 📄 开始分析论文：path/to/your/paper.docx
-
 ✅ 文档转换成功
 👤 学生姓名：张三
 🎓 学号：20230284210
@@ -83,41 +86,34 @@ python3 main.py "path/to/your/paper.docx"
    提取公式数：2
    提取因果链：1
    ⚠️ 过度控制问题：1处
+
+📝 报告骨架已生成：./reviews/paper_评价报告_骨架.md
 ```
 
-### 2. 保存分析结果
+### 2. AI评价
 
-```bash
-python3 main.py "path/to/paper.docx" -o ./reviews
-```
-
-### 3. Claude Code Agent 评价
-
-在 Claude Code 中直接说：
-
-```
-请评价 papers/数字金融对商业银行风险的影响研究.docx
-```
-
-Agent 将：
-1. 运行 Python 规则检测层
-2. 读取论文全文
-3. 进行 6 维度深度 AI 评价
-4. 生成结构化评价报告
+Agent读取骨架 + 论文markdown，填充AI评价内容。
 
 ## 使用方法
 
-### Python 规则检测层（单独使用）
+### 推荐：生成报告骨架（包含所有Python检测数据）
 
 ```bash
-# 分析单篇论文，输出结构化数据
+# 生成报告骨架 + 论文markdown
+python3 main.py "论文路径.docx" --report -o ./reviews
+
+# 生成报告骨架（输出到当前目录）
+python3 main.py "论文路径.docx" --report
+```
+
+### 单独使用Python规则检测
+
+```bash
+# 仅输出分析摘要（不生成骨架）
 python3 main.py "论文路径.docx" --json-only
 
-# 分析并保存结果到指定目录
+# 保存JSON分析结果
 python3 main.py "论文路径.docx" --output ./reviews
-
-# 完整分析模式
-python3 main.py "论文路径.docx" -f both -o ./reviews
 ```
 
 ### Claude Code Agent 使用
@@ -196,9 +192,12 @@ thesis-review-agent/
 ## 四、总结
 ```
 
-## Version
+## 版本历史
 
-Current version: v0.1.0
+| 版本 | 日期 | 更新内容 |
+|------|------|---------|
+| v0.2.0 | 2026-04-04 | 新增 `--report` 选项，生成AI填充用报告骨架，整合工作流 |
+| v0.1.0 | 2026-03-24 | 初始版本，6维度评价体系，Python规则检测层 |
 
 ## License
 

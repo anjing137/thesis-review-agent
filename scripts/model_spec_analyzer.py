@@ -225,11 +225,11 @@ class ModelSpecAnalyzer:
         """
         执行完整的模型设定分析
 
-        注意：对于实证性论文，本模块仅标记需要AI深度分析的信号，
-        具体的变量提取、因果链识别、过度控制检测由AI在评价阶段完成。
+        实证性论文：先尝试Python规则提取，失败则标记由AI完成
+        学理性论文：直接返回满分
 
         Returns:
-            ModelSpecResult，包含元数据和需要AI分析的内容
+            ModelSpecResult，包含提取结果和问题检测
         """
         result = ModelSpecResult()
 
@@ -241,16 +241,37 @@ class ModelSpecAnalyzer:
             result.causal_logic = 100
             return result
 
-        # 对于实证性论文，标记为需要AI深度分析
-        result.is_empirical = True
-        result.spec_completeness = 0  # AI需要完成
-        result.spec_accuracy = 0
-        result.causal_logic = 0
-        result.extraction_confidence = 0.5  # 需要AI判断
+        # 尝试提取变量和因果链
+        self.variables = self.extract_variables()
+        self.causal_chains = self.extract_causal_chains()
+        self.formulas = self.extract_model_formulas()
 
-        # 检测内生性处理（这个可以用关键词简单检测）
+        # 如果提取到内容，计算评分；否则标记由AI完成
+        if self.variables or self.causal_chains:
+            result.variables = self.variables
+            result.causal_chains = self.causal_chains
+            result.formulas = self.formulas
+            result.spec_completeness = self._calculate_completeness()
+            result.spec_accuracy = self._calculate_accuracy()
+            result.causal_logic = self._calculate_causal_logic()
+            result.extraction_confidence = self._calculate_confidence()
+            result.is_empirical = True
+        else:
+            # Python提取失败，标记由AI完成
+            result.is_empirical = True
+            result.spec_completeness = 0
+            result.spec_accuracy = 0
+            result.causal_logic = 0
+            result.extraction_confidence = 0.5
+
+        # 检测内生性处理（关键词检测仍由Python完成）
         result.endogeneity_check = self.verify_endogeneity_handling()
         self.endogeneity_check = result.endogeneity_check
+
+        # 检测过度控制问题（如果提取到因果链和公式）
+        if self.causal_chains and self.formulas:
+            self.over_control_issues = self.detect_over_control()
+            result.over_control_issues = self.over_control_issues
 
         return result
 

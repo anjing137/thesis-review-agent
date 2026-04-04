@@ -10,6 +10,12 @@
 python3 /Users/anjing137/.claude/projects/paperCheck/thesis-review-agent/main.py "论文完整路径" --json-only
 ```
 
+**【重要】关于字数判断**：
+- 标题字数：Python已精准统计（basic_stats.title_word_count），**不要自行估算**
+- 正文字数：Python已精准统计（basic_stats.word_count），**不要自行估算**
+- 参考文献数量：Python已精准统计（basic_stats.ref_count），**不要自行估算**
+- 所有字数/数量判断必须使用Python检测结果
+
 ### 第二步：读取论文全文
 
 使用 pandoc 将论文转换为 Markdown 后读取内容：
@@ -41,6 +47,7 @@ pandoc "论文路径.docx" -o /tmp/paper_review.md
 
 ### 维度1：选题与研究问题（15%）
 - 题目是否≤20字、具体明确
+- **标题字数必须使用Python检测结果（basic_stats.title_word_count），不要自行估算**
 - 研究必要性是否充分论证
 - 研究价值和创新点是否明确
 
@@ -89,11 +96,13 @@ pandoc "论文路径.docx" -o /tmp/paper_review.md
 # 论文评价报告
 
 ## 基本信息
-- 学生姓名：[从检测结果提取]
-- 学号：[从检测结果提取]
-- 专业：[从检测结果提取]
-- 论文题目：[题目]
-- 论文类型：[实证性/学理性]
+- 学生姓名：[从Python检测结果提取]
+- 学号：[从Python检测结果提取]
+- 专业：[从Python检测结果提取]
+- 论文题目：[从Python检测结果提取]
+- 论文类型：[实证性/学理性，从Python检测结果提取]
+- 标题字数：[从basic_stats.title_word_count提取，不要估算]
+- 正文字数：[从basic_stats.word_count提取，不要估算]
 - 评价日期：[今天日期]
 
 ## 一、总体评价

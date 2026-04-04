@@ -23,7 +23,6 @@ from datetime import datetime
 
 # 导入模型设定分析器
 import sys
-import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from model_spec_analyzer import ModelSpecAnalyzer, model_spec_to_dict
 
@@ -49,6 +48,8 @@ class BasicStats:
     foreign_ref_ok: bool = False
     journal_ratio: float = 0.0
     recent_5yr_ratio: float = 0.0
+    title_word_count: int = 0
+    title_word_count_ok: bool = False
 
 
 @dataclass
@@ -187,7 +188,7 @@ class PaperAnalyzer:
         for i, line in enumerate(lines[:30]):
             if '学年论文' in line or '毕业论文' in line:
                 for j in range(i+1, min(i+5, len(lines))):
-                    candidate = re.sub(r'\*+', '', lines[j]).strip()
+                    candidate = re.sub(r'[\*#]+', '', lines[j]).strip()
                     # 过滤掉无效内容
                     if candidate and len(candidate) > 10:
                         # 排除常见的非题目内容
@@ -224,39 +225,211 @@ class PaperAnalyzer:
         return 'empirical' if empirical_count > theoretical_count else 'theoretical'
 
     def count_words(self) -> int:
-        """统计正文字数（不含摘要、参考文献、致谢）"""
+        """
+        统计正文字数
+
+        正文范围：目录结束后，到参考文献之前
+        统计：中文字符 + 英文字母 + 标点符号
+        """
         if not self.content:
             return 0
 
         content = self.content
 
-        # 1. 移除参考文献部分
+        # 1. 找到参考文献的起始位置
         ref_patterns = [
-            r'\n##?\s*\*{0,2}参考文献\*{0,2}\s*\n',
-            r'\n\[\]\{[^}]+\}\*?\*{0,2}参考文献\*{0,2}\*?\s*\n',
+            r'\n#{1,2}\s*\*?\*?参考文献[：:]?\s*\*?\*?\n',
+            r'\[\]\{[^}]+\}\s*\*?\*?参考文献',
         ]
-        for pattern in ref_patterns:
-            if re.search(pattern, content):
-                content = re.split(pattern, content)[0]
+        ref_end_pos = len(content)
+        for p in ref_patterns:
+            m = re.search(p, content)
+            if m:
+                ref_end_pos = min(ref_end_pos, m.start())
+
+        content = content[:ref_end_pos]
+
+        # 2. 找到目录的结束位置
+        # 目录格式：先找到"目录"标题，然后向后找到最后一个目录项作为结束
+        toc_patterns = [
+            r'\*\*(?:目\s*录|目录)\*\*',
+            r'(?:^|\n)目\s*录(?:\n|$)',
+        ]
+        toc_start_pos = -1
+        toc_end_pos = 0
+        for p in toc_patterns:
+            m = re.search(p, content)
+            if m:
+                toc_start_pos = m.start()
+                toc_end_pos = m.end()
                 break
 
-        # 2. 移除致谢部分
-        ack_patterns = [
-            r'\n##?\s*\*{0,2}致谢\*{0,2}\s*\n',
-            r'\n\[\]\{[^}]+\}\*?\*{0,2}致谢\*{0,2}\*?\s*\n',
-        ]
-        for pattern in ack_patterns:
-            if re.search(pattern, content):
-                content = re.split(pattern, content)[0]
-                break
+        # 如果找到了目录标题，向后找最后一个目录项（如"参考文献"目录项）
+        if toc_start_pos >= 0:
+            # 向后查找最后一个目录项（常见模式：[]: #xxx 格式的链接）
+            last_toc_patterns = [
+                r'\[参考文献[^\]]*\]\([^)]*\)',  # [参考文献 [15](#参考文献)]
+                r'\n\d+\.\s+[^\n]+',  # 数字编号的目录项
+            ]
+            last_toc_pos = toc_end_pos
+            for p in last_toc_patterns:
+                matches = list(re.finditer(p, content[toc_end_pos:]))
+                if matches:
+                    last_match = matches[-1]
+                    last_toc_pos = toc_end_pos + last_match.end()
+            toc_end_pos = last_toc_pos
 
-        # 3. 移除摘要部分
-        abstract_match = re.search(r'摘要[：:]?\s*[\s\S]{100,800}', content)
+        if toc_end_pos > 0:
+            content = content[toc_end_pos:]
+
+        # 3. 移除markdown链接格式 [xxx][yyy] 和 [xxx](yyy)
+        content = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', content)
+        content = re.sub(r'\[([^\]]*)\]\[[^\]]*\]', r'\1', content)
+
+        # 4. 只统计中英文字符
+        chinese_chars = re.findall(r'[\u4e00-\u9fff]', content)
+        english_chars = re.findall(r'[A-Za-z]+', content)
+        return len(chinese_chars) + len(''.join(english_chars))
+
+    def get_llm_content_prompt(self) -> str:
+        """
+        生成给大模型的提示，用于让大模型返回摘要和正文内容
+
+        Returns:
+            提示字符串
+        """
+        if not self.content:
+            return "论文内容为空"
+
+        # 提取前2000字符给大模型看（帮助理解论文结构）
+        preview = self.content[:2000]
+
+        return f"""请阅读以下论文内容，识别摘要和正文的范围。
+
+**摘要定义**：包含中英文摘要的内容（通常在论文开头）
+
+**正文定义**：从引言/绪论开始，到参考文献之前结束（不包含摘要、目录、参考文献、致谢）
+
+**字数要求**：
+- 摘要：300-500字
+- 正文：≥8000字
+
+论文内容预览：
+---
+{preview}
+...
+
+（以上为论文开头部分，请根据完整内容判断）
+
+请在你回复中包含以下标记来指示内容范围：
+
+【摘要】
+[请在这里粘贴摘要的完整内容，包括中文摘要和英文摘要]
+【摘要结束】
+
+【正文内容】
+[请在这里粘贴从正文开始到正文结束的全部内容]
+【正文内容结束】
+
+注意：
+1. 摘要包含中英文摘要，正文不包含摘要
+2. 只粘贴指定内容，不要包含目录、参考文献、致谢
+3. 保留所有中英文内容和标点符号
+4. 不要修改或省略任何内容
+"""
+
+    def count_words_from_text(self, text: str) -> int:
+        """
+        统计给定文本的中英文字符数
+
+        Args:
+            text: 待统计的文本
+
+        Returns:
+            字数（中文字符 + 英文字母）
+        """
+        if not text:
+            return 0
+
+        # 统计中英文字符
+        chinese_chars = re.findall(r'[\u4e00-\u9fff]', text)
+        english_chars = re.findall(r'[A-Za-z]+', text)
+        return len(chinese_chars) + len(''.join(english_chars))
+
+    def parse_llm_content_response(self, llm_response: str) -> dict:
+        """
+        解析大模型返回的内容，提取摘要和正文，并统计字数
+
+        Args:
+            llm_response: 大模型返回的内容
+
+        Returns:
+            dict: {
+                'abstract_text': str,
+                'body_text': str,
+                'abstract_word_count': int,
+                'body_word_count': int,
+                'abstract_ok': bool,  # 300-500字
+                'word_count_ok': bool,  # ≥8000字
+                'error': str or None
+            }
+        """
+        result = {
+            'abstract_text': '',
+            'body_text': '',
+            'abstract_word_count': 0,
+            'body_word_count': 0,
+            'abstract_ok': False,
+            'word_count_ok': False,
+        }
+
+        if not llm_response:
+            result['error'] = '大模型返回内容为空'
+            return result
+
+        # 提取摘要
+        abstract_pattern = r'【摘要】\s*(.*?)\s*【摘要结束】'
+        abstract_match = re.search(abstract_pattern, llm_response, re.DOTALL)
         if abstract_match:
-            content = content[abstract_match.end():]
+            result['abstract_text'] = abstract_match.group(1).strip()
+            result['abstract_word_count'] = self.count_words_from_text(result['abstract_text'])
+            result['abstract_ok'] = 300 <= result['abstract_word_count'] <= 500
 
-        # 4. 统计中文字符数
-        chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', content))
+        # 提取正文
+        body_pattern = r'【正文内容】\s*(.*?)\s*【正文内容结束】'
+        body_match = re.search(body_pattern, llm_response, re.DOTALL)
+        if body_match:
+            result['body_text'] = body_match.group(1).strip()
+            result['body_word_count'] = self.count_words_from_text(result['body_text'])
+            result['word_count_ok'] = result['body_word_count'] >= 8000
+
+        # 检查是否有错误
+        if not abstract_match and not body_match:
+            result['error'] = '未找到摘要或正文标记'
+
+        return result
+
+    def count_title_words(self) -> int:
+        """统计论文标题字数（中文字符）"""
+        if not self.content:
+            return 0
+
+        # 从学生信息中获取标题
+        student_info = self.extract_student_info()
+        title = student_info.paper_title
+
+        if not title:
+            # 如果没从学生信息中获取到，从内容中查找
+            # 查找包含"论文题目"或"标题"的行
+            match = re.search(r'(?:论文题目|标题)[:：]?\s*([^\n]{5,50})', self.content)
+            if match:
+                title = match.group(1).strip()
+
+        if not title:
+            return 0
+
+        # 统计中文字符数（不含标点、空格、英文）
+        chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', title))
         return chinese_chars
 
     def extract_reference_section(self) -> str:
@@ -265,14 +438,14 @@ class PaperAnalyzer:
             return ""
 
         patterns = [
-            # 模式1: ## 参考文献 或 **参考文献** 或 # 参考文献
-            r'##?\s*\*{0,2}参考文献\*{0,2}\s*\n([\s\S]+?)(?:\n##|\Z)',
+            # 模式1: ## 参考文献 或 **参考文献** 或 # 参考文献（含中文冒号）
+            r'##?\s*\*{0,2}参考文献[：:]?\s*\n([\s\S]+?)(?:\n##|\Z)',
             # 模式2: []{anchor}**参考文献** 格式（带Markdown anchor）
             r'\[\]\{[^}]+\}.*?\*{0,2}参考文献\*{0,2}\s*\n([\s\S]+?)(?:\n##|\Z)',
             # 模式3: 参考文献作为加粗文本，四级标题后跟列表
             r'\*{0,3}参考文献\*{0,3}\s*\n\s*(?:<!--.*?-->\s*)?([\s\S]+?)(?:\n##|\n#\s|\Z)',
-            # 模式4: 简单的"参考文献"后面跟数字开头的行
-            r'(?<=\n)\s*参考文献\s*\n([\s\S]+?)(?=\n#\s|\Z)',
+            # 模式4: 简单的"参考文献"后面跟数字开头的行（含中文冒号）
+            r'(?<=\n)\s*参考文献[：:]?\s*\n([\s\S]+?)(?=\n#\s|\Z)',
         ]
 
         for pattern in patterns:
@@ -294,13 +467,35 @@ class PaperAnalyzer:
                 'books': 0, 'recent_5yr': 0, 'journal_ratio': 0
             }
 
+        # 将参考文献按条目合并（每条文献可能跨多行）
         lines = ref_section.split('\n')
+        entries = []
+        current_entry = []
+
+        for line in lines:
+            line_stripped = line.strip()
+            if not line_stripped:
+                continue
+
+            # 检查是否是参考文献条目（以数字开头）
+            if re.match(r'^\s*\[?\d+\]?[\.\s]', line_stripped):
+                if current_entry:
+                    entries.append(' '.join(current_entry))
+                current_entry = [line_stripped]
+            else:
+                # 非起始行，合并到当前条目
+                current_entry.append(line_stripped)
+
+        # 添加最后一条
+        if current_entry:
+            entries.append(' '.join(current_entry))
+
         total = 0
         foreign = 0
         journals = 0
         books = 0
         recent_5yr = 0
-        current_year = 2026
+        current_year = datetime.now().year
 
         # 外文文献特征
         foreign_patterns = [
@@ -312,38 +507,29 @@ class PaperAnalyzer:
             r'Economics?', r'Management', r'Finance',
         ]
 
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
-            # 检查是否是参考文献条目
-            if not re.match(r'^\s*\[?\d+\]?[\.\s]', line):
-                continue
-
-            # 排除空条目（只有数字和标点）
-            cleaned = re.sub(r'[\s\d\.\[\]]', '', line)
-            if len(cleaned) < 10:
+        for entry in entries:
+            entry_cleaned = re.sub(r'[\s\d\.\[\]]', '', entry)
+            if len(entry_cleaned) < 10:
                 continue
 
             total += 1
 
             # 检测外文文献
             for pattern in foreign_patterns:
-                if re.search(pattern, line, re.IGNORECASE):
+                if re.search(pattern, entry, re.IGNORECASE):
                     foreign += 1
                     break
 
-            # 检测期刊类[J]
-            if re.search(r'\[J\]', line) or re.search(r'\d+\(\d+\)', line):
+            # 检测期刊类[J]或带页码的格式（处理markdown转义\[J\]\[\]和普通[J]）
+            if re.search(r'\[J\]|\\\[J\\\]', entry) or re.search(r'\d+\(\d+\)', entry):
                 journals += 1
 
             # 检测书籍[M]
-            if re.search(r'\[M\]', line):
+            if re.search(r'\[M\]', entry):
                 books += 1
 
             # 检测近五年文献
-            year_match = re.search(r'(20\d{2})', line)
+            year_match = re.search(r'(20\d{2})', entry)
             if year_match:
                 year = int(year_match.group(1))
                 if year >= current_year - 5:
@@ -530,7 +716,9 @@ class PaperAnalyzer:
 
         # 4. 统计字数
         word_count = self.count_words()
+        title_word_count = self.count_title_words()
         print(f"📝 正文字数：{word_count}字 {'✅' if word_count >= 8000 else '❌'}")
+        print(f"📝 标题字数：{title_word_count}字 {'✅' if title_word_count <= 20 else '❌（应≤20字）'}")
 
         # 5. 统计参考文献
         ref_info = self.count_references()
@@ -565,6 +753,8 @@ class PaperAnalyzer:
             print(f"   提取变量数：{len(ms_result.variables)}")
             print(f"   提取公式数：{len(ms_result.formulas)}")
             print(f"   提取因果链：{len(ms_result.causal_chains)}")
+            if ms_result.extraction_confidence < 0.6:
+                print(f"   💡 Python提取受限，AI评价时将深度分析变量和因果链")
 
             if ms_result.over_control_issues:
                 print(f"   ⚠️ 过度控制问题：{len(ms_result.over_control_issues)}处")
@@ -589,6 +779,8 @@ class PaperAnalyzer:
             basic_stats={
                 'word_count': word_count,
                 'word_count_ok': word_count >= 8000,
+                'title_word_count': title_word_count,
+                'title_word_count_ok': title_word_count <= 20 and title_word_count > 0,
                 'ref_count': ref_info['total'],
                 'ref_count_ok': ref_info['total'] >= 15,
                 'foreign_ref_count': ref_info['foreign'],
