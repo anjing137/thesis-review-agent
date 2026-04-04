@@ -16,7 +16,6 @@
 import re
 import os
 import subprocess
-import json
 from dataclasses import dataclass, asdict
 from typing import Optional, List, Dict
 from datetime import datetime
@@ -308,57 +307,6 @@ class PaperAnalyzer:
         english_chars = re.findall(r'[A-Za-z]+', content)
         return len(chinese_chars) + len(''.join(english_chars))
 
-    def get_llm_content_prompt(self) -> str:
-        """
-        生成给大模型的提示，用于让大模型返回摘要和正文内容
-
-        Returns:
-            提示字符串
-        """
-        if not self.content:
-            return "论文内容为空"
-
-        # 使用适当长度的内容（保留结构信息）
-        # 截取论文主体部分（足够LLM理解结构）
-        content_preview = self.content[:25000]
-
-        return f"""请阅读以下论文内容，识别摘要和正文的范围。
-
-**摘要定义**：包含中文摘要和英文摘要的内容（通常在论文开头，以"摘要"开头）
-
-**正文定义**：从"一、引言"或"一、绪论"开始，到"参考文献"之前结束（不包含摘要、目录、参考文献、致谢）
-
-**字数要求**：
-- 摘要（中文）：300-500字
-- 正文：≥8000字
-
-论文全文内容：
----
-{content_preview}
----
-
-请仔细阅读并识别摘要和正文范围，在回复中包含以下精确标记：
-
-【摘要】
-[请在这里粘贴中文摘要的完整内容，包括所有中文字符，不要省略任何内容]
-【摘要结束】
-
-【英文摘要】
-[请在这里粘贴英文摘要的完整内容，包括所有英文字符，不要省略任何内容]
-【英文摘要结束】
-
-【正文内容】
-[请在这里粘贴从"一、引言"或"一、绪论"开始，到"参考文献"之前的所有正文内容，包括所有中英文和数字，不要省略任何内容]
-【正文内容结束】
-
-注意：
-1. 严格使用上述标记格式，不要添加其他标记
-2. 摘要只需要中文摘要部分（不含英文），英文摘要单独标记
-3. 正文只粘贴从引言到参考文献之前的内容，不要包含参考文献、致谢、目录
-4. 保留所有原始内容，不要修改或省略任何字符
-5. 字数统计基于：中文每个汉字=1字，英文每个字母=1字
-"""
-
     def count_words_from_text(self, text: str) -> int:
         """
         统计给定文本的中英文字符数
@@ -440,61 +388,6 @@ class PaperAnalyzer:
             result['body_text'] = body_match.group(1).strip()
             result['body_word_count'] = self.count_words_from_text(result['body_text'])
             result['body_ok'] = result['body_word_count'] >= 8000
-
-        return result
-
-    def parse_llm_content_response(self, llm_response: str) -> dict:
-        """
-        解析大模型返回的内容，提取摘要和正文，并统计字数
-
-        Args:
-            llm_response: 大模型返回的内容
-
-        Returns:
-            dict: {
-                'abstract_text': str,      # 中文摘要原文
-                'body_text': str,           # 正文原文
-                'abstract_word_count': int, # 中文摘要字数（不含英文）
-                'body_word_count': int,    # 正文字数（中+英）
-                'abstract_ok': bool,        # 300-500字
-                'word_count_ok': bool,      # ≥8000字
-                'error': str or None
-            }
-        """
-        result = {
-            'abstract_text': '',
-            'body_text': '',
-            'abstract_word_count': 0,
-            'body_word_count': 0,
-            'abstract_ok': False,
-            'word_count_ok': False,
-        }
-
-        if not llm_response:
-            result['error'] = '大模型返回内容为空'
-            return result
-
-        # 提取中文摘要
-        abstract_pattern = r'【摘要】\s*(.*?)\s*【摘要结束】'
-        abstract_match = re.search(abstract_pattern, llm_response, re.DOTALL)
-        if abstract_match:
-            result['abstract_text'] = abstract_match.group(1).strip()
-            # 只统计中文字符（不含英文）
-            chinese_chars = re.findall(r'[\u4e00-\u9fff]', result['abstract_text'])
-            result['abstract_word_count'] = len(chinese_chars)
-            result['abstract_ok'] = 300 <= result['abstract_word_count'] <= 500
-
-        # 提取正文
-        body_pattern = r'【正文内容】\s*(.*?)\s*【正文内容结束】'
-        body_match = re.search(body_pattern, llm_response, re.DOTALL)
-        if body_match:
-            result['body_text'] = body_match.group(1).strip()
-            result['body_word_count'] = self.count_words_from_text(result['body_text'])
-            result['word_count_ok'] = result['body_word_count'] >= 8000
-
-        # 检查是否有错误
-        if not abstract_match and not body_match:
-            result['error'] = '未找到摘要或正文标记'
 
         return result
 
@@ -907,43 +800,3 @@ class PaperAnalyzer:
 
         return result
 
-    def analyze_to_json(self) -> str:
-        """分析并返回JSON格式结果"""
-        result = self.analyze()
-        return json.dumps(asdict(result), ensure_ascii=False, indent=2)
-
-
-def main():
-    """CLI入口"""
-    import argparse
-
-    parser = argparse.ArgumentParser(description='论文分析器')
-    parser.add_argument('paper_path', help='论文文件路径（.docx格式）')
-    parser.add_argument('--output', '-o', help='输出JSON文件路径')
-    parser.add_argument('--pretty', '-p', action='store_true', help='美化输出')
-
-    args = parser.parse_args()
-
-    analyzer = PaperAnalyzer(args.paper_path)
-
-    if args.output:
-        result = analyzer.analyze()
-        with open(args.output, 'w', encoding='utf-8') as f:
-            json.dump(asdict(result), f, ensure_ascii=False, indent=2)
-        print(f"✅ 分析结果已保存至：{args.output}")
-    else:
-        result_json = analyzer.analyze_to_json()
-        if args.pretty:
-            print(result_json)
-        else:
-            # 简化输出
-            result = analyzer.analyze()
-            print(f"\n📊 分析完成")
-            print(f"   论文类型：{result.metadata['paper_type_cn']}")
-            print(f"   字数：{result.basic_stats['word_count']}字")
-            print(f"   参考文献：{result.basic_stats['ref_count']}篇")
-            print(f"   外文文献：{result.basic_stats['foreign_ref_count']}篇")
-
-
-if __name__ == '__main__':
-    main()

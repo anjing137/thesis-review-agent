@@ -82,16 +82,6 @@ class OverControlIssue:
 
 
 @dataclass
-class VariableRoleIssue:
-    """变量角色问题"""
-    variable: str
-    declared_role: str
-    actual_role: str
-    evidence: str
-    severity: str = "medium"
-
-
-@dataclass
 class EndogeneityCheck:
     """内生性处理检查"""
     has_endogeneity: bool
@@ -110,8 +100,6 @@ class ModelSpecResult:
 
     # 检测到的问题
     over_control_issues: List[OverControlIssue] = field(default_factory=list)
-    variable_role_issues: List[VariableRoleIssue] = field(default_factory=list)
-    missing_control_issues: List[str] = field(default_factory=list)
 
     # 验证结果
     endogeneity_check: Optional[EndogeneityCheck] = None
@@ -218,7 +206,6 @@ class ModelSpecAnalyzer:
         self.causal_chains: List[CausalChain] = []
         self.formulas: List[ModelFormula] = []
         self.over_control_issues: List[OverControlIssue] = []
-        self.variable_role_issues: List[VariableRoleIssue] = []
         self.endogeneity_check: Optional[EndogeneityCheck] = None
 
     def analyze(self) -> ModelSpecResult:
@@ -687,46 +674,6 @@ class ModelSpecAnalyzer:
                     return f"{chain.cause_var} → {chain.effect_var}"
         return ""
 
-    def check_missing_controls(self) -> List[str]:
-        """
-        检查是否遗漏了重要的控制变量
-
-        Returns:
-            警告信息列表
-        """
-        issues = []
-
-        if not self.variables:
-            return issues
-
-        control_var_names = set()
-        for var in self.variables:
-            if var.role == VariableRole.CONTROL:
-                control_var_names.add(var.name_en.lower())
-
-        # 检查常见控制变量
-        typical_controls = {
-            'size': '企业规模（总资产或对数）',
-            'lev': '资产负债率',
-            'age': '企业年龄',
-            'roa': '盈利能力',
-        }
-
-        for ctrl, name in typical_controls.items():
-            if ctrl not in control_var_names and not any(ctrl in v for v in control_var_names):
-                issues.append(f"建议增加{name}作为控制变量")
-
-        # 检查是否缺少行业/年份固定效应
-        has_year_fe = any('year' in var.name_en.lower() or '时间' in var.name_cn for var in self.variables)
-        has_industry_fe = any('industry' in var.name_en.lower() or '行业' in var.name_cn for var in self.variables)
-
-        if not has_year_fe:
-            issues.append("建议控制年份固定效应（year fixed effects）")
-        if not has_industry_fe:
-            issues.append("建议控制行业固定效应（industry fixed effects）")
-
-        return issues
-
     def verify_endogeneity_handling(self) -> EndogeneityCheck:
         """
         验证内生性问题是否被妥善处理
@@ -883,7 +830,7 @@ class ModelSpecAnalyzer:
             return 0
 
         score = 100
-        issues = len(self.over_control_issues) + len(self.variable_role_issues)
+        issues = len(self.over_control_issues)
 
         # 每个问题扣10分
         score -= issues * 10
@@ -973,16 +920,6 @@ def model_spec_to_dict(result: ModelSpecResult) -> Dict:
             }
             for i in result.over_control_issues
         ],
-        'variable_role_issues': [
-            {
-                'variable': i.variable,
-                'declared_role': i.declared_role,
-                'actual_role': i.actual_role,
-                'severity': i.severity,
-            }
-            for i in result.variable_role_issues
-        ],
-        'missing_control_issues': result.missing_control_issues,
         'endogeneity_check': {
             'has_endogeneity': result.endogeneity_check.has_endogeneity if result.endogeneity_check else False,
             'method_used': result.endogeneity_check.method_used if result.endogeneity_check else None,
