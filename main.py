@@ -35,24 +35,14 @@ def analyze_paper(paper_path: str, output_dir: str = None) -> dict:
     Returns:
         分析结果字典
     """
-    analyzer = PaperAnalyzer(paper_path)
+    analyzer = PaperAnalyzer(paper_path, output_dir)
     result = analyzer.analyze()
 
-    # 确定markdown文件路径
+    # 确定markdown文件路径（用于报告引用）
     if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
         md_path = os.path.join(output_dir, os.path.basename(paper_path).replace('.docx', '.md'))
     else:
         md_path = paper_path.replace('.docx', '.md')
-
-    # 检查是否已有带标记的markdown文件（AI已标记则保留，不覆盖）
-    marked_result = analyzer.read_marked_content(md_path)
-    if marked_result.get('has_markers'):
-        print(f"📝 检测到已标记的markdown文件，保留现有标记内容")
-    else:
-        # 无标记，从docx转换并保存
-        with open(md_path, 'w', encoding='utf-8') as f:
-            f.write(analyzer.content)
 
     # 构建结果
     result_dict = {
@@ -64,7 +54,7 @@ def analyze_paper(paper_path: str, output_dir: str = None) -> dict:
         'abstract': result.abstract,
         'reference_section': result.reference_section,
         'model_spec': result.model_spec,
-        'markdown_file': md_path,  # markdown文件路径
+        'markdown_file': md_path,
     }
 
     # 如果指定了输出目录，保存JSON结果

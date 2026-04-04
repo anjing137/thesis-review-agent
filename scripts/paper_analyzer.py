@@ -115,17 +115,37 @@ class AnalysisResult:
 class PaperAnalyzer:
     """论文分析器"""
 
-    def __init__(self, paper_path: str):
+    def __init__(self, paper_path: str, output_dir: str = None):
         self.paper_path = paper_path
+        self.output_dir = output_dir
         self.content = None
 
-    def convert_to_markdown(self) -> Optional[str]:
-        """使用 pandoc 将 Word 文档转换为 Markdown"""
+    def convert_to_markdown(self, output_dir: str = None) -> Optional[str]:
+        """使用 pandoc 将 Word 文档转换为 Markdown
+
+        Args:
+            output_dir: 输出目录（可选），如指定则保存到该目录
+        """
         if not os.path.exists(self.paper_path):
             print(f"❌ 文件不存在：{self.paper_path}")
             return None
 
-        md_path = self.paper_path.replace('.docx', '_temp.md')
+        # 确定输出路径
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            md_path = os.path.join(output_dir, os.path.basename(self.paper_path).replace('.docx', '.md'))
+        else:
+            md_path = self.paper_path.replace('.docx', '.md')
+
+        # 如果已存在带标记的markdown，直接读取（不覆盖）
+        marked = self.read_marked_content(md_path)
+        if marked.get('has_markers'):
+            print(f"📝 检测到已标记的markdown文件，保留现有内容")
+            with open(md_path, 'r', encoding='utf-8') as f:
+                self.content = f.read()
+            return self.content
+
+        # 从docx转换
         try:
             subprocess.run(
                 ['pandoc', self.paper_path, '-o', md_path],
@@ -134,7 +154,7 @@ class PaperAnalyzer:
             )
             with open(md_path, 'r', encoding='utf-8') as f:
                 self.content = f.read()
-            os.remove(md_path)
+            print(f"📄 已保存markdown：{md_path}")
             return self.content
         except subprocess.CalledProcessError as e:
             print(f"❌ Pandoc转换失败：{e}")
@@ -357,97 +377,69 @@ class PaperAnalyzer:
         english_chars = re.findall(r'[A-Za-z]+', text)
         return len(chinese_chars) + len(''.join(english_chars))
 
-    def call_claude_for_content(self, prompt: str, timeout: int = 60) -> Optional[str]:
+    def read_marked_content(self, md_path: str) -> dict:
         """
-        调用Claude CLI获取内容
+        读取带标记的markdown文件，提取摘要和正文，统计字数
+
+        标记格式：
+        【摘要】
+        ...摘要内容...
+        【摘要结束】
+
+        【正文内容】
+        ...正文内容...
+        【正文内容结束】
 
         Args:
-            prompt: 给Claude的提示词
-            timeout: 超时时间（秒）
-
-        Returns:
-            Claude返回的内容，失败返回None
-        """
-        try:
-            result = subprocess.run(
-                ['claude', '-p', prompt, '--output-format', 'text'],
-                capture_output=True,
-                text=True,
-                timeout=timeout
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
-            else:
-                print(f"   ⚠️ Claude调用失败: {result.stderr[:100]}")
-                return None
-        except FileNotFoundError:
-            print("   ⚠️ claude CLI未找到，请确保已安装")
-            return None
-        except subprocess.TimeoutExpired:
-            print("   ⚠️ Claude调用超时")
-            return None
-        except Exception as e:
-            print(f"   ⚠️ Claude调用异常: {str(e)[:100]}")
-            return None
-
-    def llm_assisted_word_count(self) -> dict:
-        """
-        LLM辅助字数统计
-
-        让LLM识别摘要和正文范围，返回标记内容后统计字数
+            md_path: markdown文件路径
 
         Returns:
             dict: {
-                'abstract_word_count': int,
-                'abstract_ok': bool,
-                'body_word_count': int,
-                'body_ok': bool,
-                'abstract_text': str,  # 原始摘要文本
-                'body_text': str,       # 原始正文文本
-                'llm_used': bool,       # 是否使用了LLM
-                'error': str or None
+                'abstract_text': str,       # 摘要原文
+                'body_text': str,          # 正文原文
+                'abstract_word_count': int, # 摘要中文字数
+                'body_word_count': int,    # 正文中英文字数
+                'abstract_ok': bool,        # 300-500字
+                'body_ok': bool,            # ≥8000字
+                'has_markers': bool,        # 是否找到标记
             }
         """
         result = {
-            'abstract_word_count': 0,
-            'abstract_ok': False,
-            'body_word_count': 0,
-            'body_ok': False,
             'abstract_text': '',
             'body_text': '',
-            'llm_used': False,
-            'error': None
+            'abstract_word_count': 0,
+            'body_word_count': 0,
+            'abstract_ok': False,
+            'body_ok': False,
+            'has_markers': False,
         }
 
-        if not self.content:
-            result['error'] = '论文内容为空'
+        if not os.path.exists(md_path):
             return result
 
-        # 生成提示词
-        prompt = self.get_llm_content_prompt()
-
-        # 调用Claude
-        print("   🔄 正在调用Claude辅助字数统计（可能需要30秒左右）...")
-        response = self.call_claude_for_content(prompt, timeout=120)
-
-        if not response:
-            result['error'] = 'Claude调用失败或超时'
+        try:
+            with open(md_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except Exception:
             return result
 
-        # 解析响应
-        parse_result = self.parse_llm_content_response(response)
+        # 提取摘要
+        abstract_match = re.search(r'【摘要】\s*(.*?)\s*【摘要结束】', content, re.DOTALL)
+        if abstract_match:
+            result['has_markers'] = True
+            result['abstract_text'] = abstract_match.group(1).strip()
+            # 只统计中文字符
+            chinese_chars = re.findall(r'[\u4e00-\u9fff]', result['abstract_text'])
+            result['abstract_word_count'] = len(chinese_chars)
+            result['abstract_ok'] = 300 <= result['abstract_word_count'] <= 500
 
-        if parse_result.get('error'):
-            result['error'] = parse_result['error']
-            return result
-
-        result['abstract_text'] = parse_result.get('abstract_text', '')
-        result['body_text'] = parse_result.get('body_text', '')
-        result['abstract_word_count'] = parse_result.get('abstract_word_count', 0)
-        result['body_word_count'] = parse_result.get('body_word_count', 0)
-        result['abstract_ok'] = parse_result.get('abstract_ok', False)
-        result['body_ok'] = parse_result.get('word_count_ok', False)
-        result['llm_used'] = True
+        # 提取正文
+        body_match = re.search(r'【正文内容】\s*(.*?)\s*【正文内容结束】', content, re.DOTALL)
+        if body_match:
+            result['has_markers'] = True
+            result['body_text'] = body_match.group(1).strip()
+            result['body_word_count'] = self.count_words_from_text(result['body_text'])
+            result['body_ok'] = result['body_word_count'] >= 8000
 
         return result
 
@@ -788,8 +780,8 @@ class PaperAnalyzer:
         print(f"📄 开始分析论文：{self.paper_path}")
         print()
 
-        # 1. 转换文档
-        content = self.convert_to_markdown()
+        # 1. 转换文档（output_dir已保存在self.output_dir）
+        content = self.convert_to_markdown(self.output_dir)
         if not content:
             return AnalysisResult()
 
@@ -808,19 +800,23 @@ class PaperAnalyzer:
         paper_type_cn = "实证性" if paper_type == 'empirical' else "学理性"
         print(f"📊 检测到论文类型：{paper_type_cn}论文")
 
-        # 4. 统计字数（先正则粗估，再LLM辅助精确统计）
-        word_count = self.count_words()
+        # 4. 统计字数
+        # 先尝试读取带标记的文件（由AI在评价时填写）
+        md_path = self.paper_path.replace('.docx', '.md')
+        marked_result = self.read_marked_content(md_path)
+
+        if marked_result.get('has_markers'):
+            # 有标记，用标记内容统计
+            word_count = marked_result.get('body_word_count', 0)
+            abstract_count = marked_result.get('abstract_word_count', 0)
+            print(f"📝 正文字数（标记）：{word_count}字 {'✅' if word_count >= 8000 else '❌'}")
+        else:
+            # 无标记，用正则统计
+            word_count = self.count_words()
+            abstract_count = 0
+            print(f"📝 正文字数（正则）：{word_count}字 {'✅' if word_count >= 8000 else '❌'}")
+
         title_word_count = self.count_title_words(student_info.paper_title)
-        print(f"📝 正文字数（正则）：{word_count}字 {'✅' if word_count >= 8000 else '❌'}")
-
-        # 如果正文字数不足8000或接近临界，使用LLM辅助统计
-        llm_result = None
-        if word_count < 8500:  # 接近临界，调用LLM
-            llm_result = self.llm_assisted_word_count()
-            if llm_result.get('llm_used') and not llm_result.get('error'):
-                word_count = llm_result.get('body_word_count', word_count)
-                print(f"📝 正文字数（LLM）：{word_count}字 {'✅' if word_count >= 8000 else '❌'}")
-
         print(f"📝 标题字数：{title_word_count}字 {'✅' if title_word_count <= 20 else '❌（应≤20字）'}")
 
         # 5. 统计参考文献
@@ -887,11 +883,10 @@ class PaperAnalyzer:
                 'foreign_ref_ok': ref_info['foreign'] >= 3,
                 'journal_ratio': ref_info['journal_ratio'],
                 'recent_5yr_ratio': ref_info['recent_5yr'] / ref_info['total'] if ref_info['total'] > 0 else 0,
-                # LLM辅助字数统计结果
-                'llm_used': llm_result.get('llm_used', False) if llm_result else False,
-                'llm_abstract_count': llm_result.get('abstract_word_count', 0) if llm_result else 0,
-                'llm_body_count': llm_result.get('body_word_count', 0) if llm_result else 0,
-                'llm_abstract_ok': llm_result.get('abstract_ok', False) if llm_result else False,
+                # 标记内容统计结果
+                'has_markers': marked_result.get('has_markers', False),
+                'abstract_count': abstract_count,
+                'abstract_ok': marked_result.get('abstract_ok', False) if marked_result.get('has_markers') else False,
             },
             structure={
                 'sections': structure_info.sections,
