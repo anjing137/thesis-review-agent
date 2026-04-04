@@ -264,20 +264,15 @@ class PaperAnalyzer:
                 toc_end_pos = m.end()
                 break
 
-        # 如果找到了目录标题，向后找最后一个目录项（如"参考文献"目录项）
+        # 如果找到了目录标题，向后找最后一个目录项
         if toc_start_pos >= 0:
-            # 向后查找最后一个目录项（常见模式：[]: #xxx 格式的链接）
-            last_toc_patterns = [
-                r'\[参考文献[^\]]*\]\([^)]*\)',  # [参考文献 [15](#参考文献)]
-                r'\n\d+\.\s+[^\n]+',  # 数字编号的目录项
-            ]
-            last_toc_pos = toc_end_pos
-            for p in last_toc_patterns:
-                matches = list(re.finditer(p, content[toc_end_pos:]))
-                if matches:
-                    last_match = matches[-1]
-                    last_toc_pos = toc_end_pos + last_match.end()
-            toc_end_pos = last_toc_pos
+            # TOC项的标准格式：[标题 [页](#链接)]
+            toc_item_pattern = r'\[([^\]]+)\s*\[\d+\]\([^)]+\)\]'
+            matches = list(re.finditer(toc_item_pattern, content[toc_end_pos:]))
+            if matches:
+                # 找到最后一个目录项的位置
+                last_match = matches[-1]
+                toc_end_pos = toc_end_pos + last_match.end()
 
         if toc_end_pos > 0:
             content = content[toc_end_pos:]
