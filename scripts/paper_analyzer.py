@@ -229,7 +229,7 @@ class PaperAnalyzer:
         统计正文字数
 
         正文范围：目录结束后，到参考文献之前
-        统计：中文字符 + 英文字母 + 标点符号
+        统计：中文字符 + 英文字母（不含标点符号）
         """
         if not self.content:
             return 0
@@ -409,18 +409,15 @@ class PaperAnalyzer:
 
         return result
 
-    def count_title_words(self) -> int:
-        """统计论文标题字数（中文字符）"""
-        if not self.content:
-            return 0
+    def count_title_words(self, title: str = None) -> int:
+        """
+        统计论文标题字数（中文字符）
 
-        # 从学生信息中获取标题
-        student_info = self.extract_student_info()
-        title = student_info.paper_title
-
+        Args:
+            title: 已知的标题（可选），如不提供则从内容中提取
+        """
         if not title:
-            # 如果没从学生信息中获取到，从内容中查找
-            # 查找包含"论文题目"或"标题"的行
+            # 从内容中查找
             match = re.search(r'(?:论文题目|标题)[:：]?\s*([^\n]{5,50})', self.content)
             if match:
                 title = match.group(1).strip()
@@ -716,7 +713,7 @@ class PaperAnalyzer:
 
         # 4. 统计字数
         word_count = self.count_words()
-        title_word_count = self.count_title_words()
+        title_word_count = self.count_title_words(student_info.paper_title)
         print(f"📝 正文字数：{word_count}字 {'✅' if word_count >= 8000 else '❌'}")
         print(f"📝 标题字数：{title_word_count}字 {'✅' if title_word_count <= 20 else '❌（应≤20字）'}")
 
@@ -748,6 +745,9 @@ class PaperAnalyzer:
             print("🔍 开始模型设定分析...")
             model_analyzer = ModelSpecAnalyzer(content, paper_type)
             ms_result = model_analyzer.analyze()
+            # 检测缺失控制变量
+            missing_controls = model_analyzer.check_missing_controls()
+            ms_result.missing_control_issues = missing_controls
             model_spec_result = model_spec_to_dict(ms_result)
 
             print(f"   提取变量数：{len(ms_result.variables)}")
@@ -761,8 +761,10 @@ class PaperAnalyzer:
                 for issue in ms_result.over_control_issues:
                     print(f"      - {issue.mediator_var}（{issue.severity}）")
 
-            if ms_result.missing_control_issues:
-                print(f"   ⚠️ 缺失控制变量：{len(ms_result.missing_control_issues)}处")
+            if missing_controls:
+                print(f"   ⚠️ 缺失控制变量：{len(missing_controls)}处")
+                for ctrl in missing_controls[:3]:
+                    print(f"      - {ctrl}")
 
             print()
 

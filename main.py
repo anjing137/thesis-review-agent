@@ -38,8 +38,12 @@ def analyze_paper(paper_path: str, output_dir: str = None) -> dict:
     analyzer = PaperAnalyzer(paper_path)
     result = analyzer.analyze()
 
-    # 保存markdown文件
-    md_path = paper_path.replace('.docx', '.md')
+    # 保存markdown文件（优先保存到output_dir，否则保存到源文件目录）
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        md_path = os.path.join(output_dir, os.path.basename(paper_path).replace('.docx', '.md'))
+    else:
+        md_path = paper_path.replace('.docx', '.md')
     with open(md_path, 'w', encoding='utf-8') as f:
         f.write(analyzer.content)
 
