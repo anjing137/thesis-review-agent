@@ -431,8 +431,8 @@ class PaperAnalyzer:
             match = re.search(pattern, self.content)
             if match:
                 section = match.group(1)
-                # 检查是否包含参考文献条目（数字开头）
-                if re.search(r'^\s*\d+\.', section, re.MULTILINE):
+                # 检查是否包含参考文献条目（有实质内容，非空）
+                if len(section.strip()) > 20:
                     return section
 
         return ""
@@ -446,28 +446,21 @@ class PaperAnalyzer:
                 'books': 0, 'recent_5yr': 0, 'journal_ratio': 0
             }
 
-        # 将参考文献按条目合并（每条文献可能跨多行）
-        lines = ref_section.split('\n')
+        # 按空行分隔条目（每条文献可能跨多行）
+        blocks = re.split(r'\n\n+', ref_section.strip())
         entries = []
-        current_entry = []
-
-        for line in lines:
-            line_stripped = line.strip()
-            if not line_stripped:
+        for block in blocks:
+            # 清理：合并内部换行为空格，去除多余空白
+            cleaned = ' '.join(block.split())
+            # 过滤非参考文献内容（附录、问卷、图表说明等）
+            if len(cleaned) < 15:
                 continue
-
-            # 检查是否是参考文献条目（以数字开头）
-            if re.match(r'^\s*\[?\d+\]?[\.\s]', line_stripped):
-                if current_entry:
-                    entries.append(' '.join(current_entry))
-                current_entry = [line_stripped]
-            else:
-                # 非起始行，合并到当前条目
-                current_entry.append(line_stripped)
-
-        # 添加最后一条
-        if current_entry:
-            entries.append(' '.join(current_entry))
+            if block.startswith('**') or block.startswith('#') or block.startswith('>'):
+                continue
+            # 参考文献特征：含作者名+年份 或 [J]/[D]/[M] 等类型标记
+            if not (re.search(r'\(20\d{2}\)|20\d{2}年', cleaned) or re.search(r'\[J\]|\[D\]|\[M\]|\[C\]', cleaned)):
+                continue
+            entries.append(cleaned)
 
         total = 0
         foreign = 0
