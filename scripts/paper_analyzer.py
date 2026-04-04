@@ -301,41 +301,45 @@ class PaperAnalyzer:
         if not self.content:
             return "论文内容为空"
 
-        # 提取前2000字符给大模型看（帮助理解论文结构）
-        preview = self.content[:2000]
+        # 使用适当长度的内容（保留结构信息）
+        # 截取论文主体部分（足够LLM理解结构）
+        content_preview = self.content[:25000]
 
         return f"""请阅读以下论文内容，识别摘要和正文的范围。
 
-**摘要定义**：包含中英文摘要的内容（通常在论文开头）
+**摘要定义**：包含中文摘要和英文摘要的内容（通常在论文开头，以"摘要"开头）
 
-**正文定义**：从引言/绪论开始，到参考文献之前结束（不包含摘要、目录、参考文献、致谢）
+**正文定义**：从"一、引言"或"一、绪论"开始，到"参考文献"之前结束（不包含摘要、目录、参考文献、致谢）
 
 **字数要求**：
-- 摘要：300-500字
+- 摘要（中文）：300-500字
 - 正文：≥8000字
 
-论文内容预览：
+论文全文内容：
 ---
-{preview}
-...
+{content_preview}
+---
 
-（以上为论文开头部分，请根据完整内容判断）
-
-请在你回复中包含以下标记来指示内容范围：
+请仔细阅读并识别摘要和正文范围，在回复中包含以下精确标记：
 
 【摘要】
-[请在这里粘贴摘要的完整内容，包括中文摘要和英文摘要]
+[请在这里粘贴中文摘要的完整内容，包括所有中文字符，不要省略任何内容]
 【摘要结束】
 
+【英文摘要】
+[请在这里粘贴英文摘要的完整内容，包括所有英文字符，不要省略任何内容]
+【英文摘要结束】
+
 【正文内容】
-[请在这里粘贴从正文开始到正文结束的全部内容]
+[请在这里粘贴从"一、引言"或"一、绪论"开始，到"参考文献"之前的所有正文内容，包括所有中英文和数字，不要省略任何内容]
 【正文内容结束】
 
 注意：
-1. 摘要包含中英文摘要，正文不包含摘要
-2. 只粘贴指定内容，不要包含目录、参考文献、致谢
-3. 保留所有中英文内容和标点符号
-4. 不要修改或省略任何内容
+1. 严格使用上述标记格式，不要添加其他标记
+2. 摘要只需要中文摘要部分（不含英文），英文摘要单独标记
+3. 正文只粘贴从引言到参考文献之前的内容，不要包含参考文献、致谢、目录
+4. 保留所有原始内容，不要修改或省略任何字符
+5. 字数统计基于：中文每个汉字=1字，英文每个字母=1字
 """
 
     def count_words_from_text(self, text: str) -> int:
@@ -356,6 +360,100 @@ class PaperAnalyzer:
         english_chars = re.findall(r'[A-Za-z]+', text)
         return len(chinese_chars) + len(''.join(english_chars))
 
+    def call_claude_for_content(self, prompt: str, timeout: int = 60) -> Optional[str]:
+        """
+        调用Claude CLI获取内容
+
+        Args:
+            prompt: 给Claude的提示词
+            timeout: 超时时间（秒）
+
+        Returns:
+            Claude返回的内容，失败返回None
+        """
+        try:
+            result = subprocess.run(
+                ['claude', '-p', prompt, '--output-format', 'text'],
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            else:
+                print(f"   ⚠️ Claude调用失败: {result.stderr[:100]}")
+                return None
+        except FileNotFoundError:
+            print("   ⚠️ claude CLI未找到，请确保已安装")
+            return None
+        except subprocess.TimeoutExpired:
+            print("   ⚠️ Claude调用超时")
+            return None
+        except Exception as e:
+            print(f"   ⚠️ Claude调用异常: {str(e)[:100]}")
+            return None
+
+    def llm_assisted_word_count(self) -> dict:
+        """
+        LLM辅助字数统计
+
+        让LLM识别摘要和正文范围，返回标记内容后统计字数
+
+        Returns:
+            dict: {
+                'abstract_word_count': int,
+                'abstract_ok': bool,
+                'body_word_count': int,
+                'body_ok': bool,
+                'abstract_text': str,  # 原始摘要文本
+                'body_text': str,       # 原始正文文本
+                'llm_used': bool,       # 是否使用了LLM
+                'error': str or None
+            }
+        """
+        result = {
+            'abstract_word_count': 0,
+            'abstract_ok': False,
+            'body_word_count': 0,
+            'body_ok': False,
+            'abstract_text': '',
+            'body_text': '',
+            'llm_used': False,
+            'error': None
+        }
+
+        if not self.content:
+            result['error'] = '论文内容为空'
+            return result
+
+        # 生成提示词
+        prompt = self.get_llm_content_prompt()
+
+        # 调用Claude
+        print("   🔄 正在调用Claude辅助字数统计（可能需要30秒左右）...")
+        response = self.call_claude_for_content(prompt, timeout=120)
+
+        if not response:
+            result['error'] = 'Claude调用失败或超时'
+            return result
+
+        # 解析响应
+        parse_result = self.parse_llm_content_response(response)
+
+        if parse_result.get('error'):
+            result['error'] = parse_result['error']
+            return result
+
+        result['abstract_text'] = parse_result.get('abstract_text', '')
+        result['body_text'] = parse_result.get('body_text', '')
+        result['abstract_word_count'] = parse_result.get('abstract_word_count', 0)
+        result['body_word_count'] = parse_result.get('body_word_count', 0)
+        result['abstract_ok'] = parse_result.get('abstract_ok', False)
+        result['body_ok'] = parse_result.get('word_count_ok', False)
+        result['llm_used'] = True
+
+        return result
+
     def parse_llm_content_response(self, llm_response: str) -> dict:
         """
         解析大模型返回的内容，提取摘要和正文，并统计字数
@@ -365,12 +463,12 @@ class PaperAnalyzer:
 
         Returns:
             dict: {
-                'abstract_text': str,
-                'body_text': str,
-                'abstract_word_count': int,
-                'body_word_count': int,
-                'abstract_ok': bool,  # 300-500字
-                'word_count_ok': bool,  # ≥8000字
+                'abstract_text': str,      # 中文摘要原文
+                'body_text': str,           # 正文原文
+                'abstract_word_count': int, # 中文摘要字数（不含英文）
+                'body_word_count': int,    # 正文字数（中+英）
+                'abstract_ok': bool,        # 300-500字
+                'word_count_ok': bool,      # ≥8000字
                 'error': str or None
             }
         """
@@ -387,12 +485,14 @@ class PaperAnalyzer:
             result['error'] = '大模型返回内容为空'
             return result
 
-        # 提取摘要
+        # 提取中文摘要
         abstract_pattern = r'【摘要】\s*(.*?)\s*【摘要结束】'
         abstract_match = re.search(abstract_pattern, llm_response, re.DOTALL)
         if abstract_match:
             result['abstract_text'] = abstract_match.group(1).strip()
-            result['abstract_word_count'] = self.count_words_from_text(result['abstract_text'])
+            # 只统计中文字符（不含英文）
+            chinese_chars = re.findall(r'[\u4e00-\u9fff]', result['abstract_text'])
+            result['abstract_word_count'] = len(chinese_chars)
             result['abstract_ok'] = 300 <= result['abstract_word_count'] <= 500
 
         # 提取正文
@@ -711,10 +811,19 @@ class PaperAnalyzer:
         paper_type_cn = "实证性" if paper_type == 'empirical' else "学理性"
         print(f"📊 检测到论文类型：{paper_type_cn}论文")
 
-        # 4. 统计字数
+        # 4. 统计字数（先正则粗估，再LLM辅助精确统计）
         word_count = self.count_words()
         title_word_count = self.count_title_words(student_info.paper_title)
-        print(f"📝 正文字数：{word_count}字 {'✅' if word_count >= 8000 else '❌'}")
+        print(f"📝 正文字数（正则）：{word_count}字 {'✅' if word_count >= 8000 else '❌'}")
+
+        # 如果正文字数不足8000或接近临界，使用LLM辅助统计
+        llm_result = None
+        if word_count < 8500:  # 接近临界，调用LLM
+            llm_result = self.llm_assisted_word_count()
+            if llm_result.get('llm_used') and not llm_result.get('error'):
+                word_count = llm_result.get('body_word_count', word_count)
+                print(f"📝 正文字数（LLM）：{word_count}字 {'✅' if word_count >= 8000 else '❌'}")
+
         print(f"📝 标题字数：{title_word_count}字 {'✅' if title_word_count <= 20 else '❌（应≤20字）'}")
 
         # 5. 统计参考文献
@@ -789,6 +898,11 @@ class PaperAnalyzer:
                 'foreign_ref_ok': ref_info['foreign'] >= 3,
                 'journal_ratio': ref_info['journal_ratio'],
                 'recent_5yr_ratio': ref_info['recent_5yr'] / ref_info['total'] if ref_info['total'] > 0 else 0,
+                # LLM辅助字数统计结果
+                'llm_used': llm_result.get('llm_used', False) if llm_result else False,
+                'llm_abstract_count': llm_result.get('abstract_word_count', 0) if llm_result else 0,
+                'llm_body_count': llm_result.get('body_word_count', 0) if llm_result else 0,
+                'llm_abstract_ok': llm_result.get('abstract_ok', False) if llm_result else False,
             },
             structure={
                 'sections': structure_info.sections,

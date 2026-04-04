@@ -89,21 +89,26 @@ class ReportGenerator:
         md.append("")
 
         # === 字数统计（LLM辅助）===
-        md.append("## 字数统计\n")
-        md.append(f"**正文字数**：{basic_stats.get('word_count', 0)}字 | 要求：≥8000字 | {'✅' if basic_stats.get('word_count_ok') else '❌'}")
-        md.append(f"**摘要字数**：待LLM统计 | 要求：300-500字")
+        md.append("## 字数统计（LLM辅助）\n")
+        llm_used = basic_stats.get('llm_used', False)
+        if llm_used:
+            # LLM已统计
+            llm_body = basic_stats.get('llm_body_count', 0)
+            llm_abs = basic_stats.get('llm_abstract_count', 0)
+            md.append(f"**正文字数**：{llm_body}字 | 要求：≥8000字 | {'✅' if llm_body >= 8000 else '❌'}")
+            md.append(f"**摘要字数**：{llm_abs}字 | 要求：300-500字 | {'✅' if 300 <= llm_abs <= 500 else '❌'}")
+        else:
+            # 需要LLM统计
+            md.append(f"**正文字数（正则）**：{basic_stats.get('word_count', 0)}字 | 要求：≥8000字 | {'✅' if basic_stats.get('word_count_ok') else '❌（接近临界，需LLM精确统计）'}")
+            md.append(f"**摘要字数**：待LLM统计 | 要求：300-500字")
+            md.append("")
+            md.append("**【请Claude完成】**：请读取论文markdown文件，使用以下提示词进行字数统计\n")
+            md.append("```")
+            md.append("请阅读论文，识别摘要和正文范围并标记：")
+            md.append("【摘要】...【摘要结束】")
+            md.append("【正文内容】...【正文内容结束】")
+            md.append("```")
         md.append("")
-        md.append("**【请LLM完成】**")
-        md.append("请阅读论文全文，判断摘要和正文范围，并在回复中包含以下标记：\n")
-        md.append("```")
-        md.append("【摘要】")
-        md.append("[粘贴摘要完整内容，包括中英文摘要]")
-        md.append("【摘要结束】")
-        md.append("")
-        md.append("【正文内容】")
-        md.append("[粘贴从引言开始到参考文献之前的所有内容]")
-        md.append("【正文内容结束】")
-        md.append("```\n")
         md.append("---\n")
 
         # === 参考文献 ===
