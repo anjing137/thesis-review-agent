@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Output / reviews
+reviews/
+
+# Debug & test files
+debug_*.py
+test_*.py
+review_paper.md
+review_workflow.md
+
+# Platform metadata
+_skillhub_meta.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
