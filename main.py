@@ -170,6 +170,7 @@ def generate_review_prompt(paper_path: str) -> dict:
     # 5. 统计数字（供 prompt 使用）
     body_char_count = stats.get("word_count", {}).get("body", 0)
     abstract_char_count = stats.get("word_count", {}).get("abstract", 0)
+    title_char_count = stats.get("word_count", {}).get("title", 0)
 
     # 6. 判断论文类型（使用 prompts.py 现成函数，从正文中提取关键词判断）
     body_for_check = (_body or "")[:5000]  # 只取前5000字加速判断
@@ -194,6 +195,7 @@ def generate_review_prompt(paper_path: str) -> dict:
 - 指导教师：{student_info['advisor']}
 - 正文字数：{body_char_count} 字
 - 摘要字数：{abstract_char_count} 字
+- 标题字数：{title_char_count} 字
 
 ## 论文类型
 {paper_type}
@@ -241,6 +243,7 @@ def generate_review_prompt(paper_path: str) -> dict:
 | 论文类型 | |
 | 正文字数 | |
 | 摘要字数 | |
+| 标题字数 | |
 
 ---
 
