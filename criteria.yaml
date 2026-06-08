@@ -1,0 +1,222 @@
+version: "0.6.0"
+name: thesis-review-agent
+spec_source: "经济与管理学院本科生论文指导要点"
+
+grade_levels:
+  - {min: 90, max: 100, label: "优秀（优+）"}
+  - {min: 85, max: 89.99, label: "良好上（优）"}
+  - {min: 80, max: 84.99, label: "良好中（良+）"}
+  - {min: 75, max: 79.99, label: "良好下（良）"}
+  - {min: 70, max: 74.99, label: "中等上（中+）"}
+  - {min: 65, max: 69.99, label: "中等（中）"}
+  - {min: 60, max: 64.99, label: "中等下（中-）"}
+  - {min: 0, max: 59.99, label: "不合格"}
+
+paper_types:
+  empirical:
+    label: "实证研究论文"
+    required_dimensions: ["D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9"]
+  theoretical:
+    label: "学理性论文"
+    required_dimensions: ["D1", "D2", "D3", "D4", "D8", "D9"]
+
+classification:
+  empirical:
+    min_keyword_hits: 3
+    keywords:
+      - "回归分析"
+      - "显著性"
+      - "OLS"
+      - "固定效应"
+      - "随机效应"
+      - "稳健性检验"
+      - "异质性分析"
+      - "内生性"
+      - "面板数据"
+      - "双重差分"
+      - "断点回归"
+      - "工具变量"
+      - "描述性统计"
+      - "相关性分析"
+      - "F检验"
+      - "豪斯曼检验"
+      - "聚类稳健标准误"
+      - "实证分析"
+      - "计量模型"
+      - "回归结果"
+      - "GMM"
+      - "PSM"
+      - "Tobit"
+
+dimensions:
+  - id: "D1"
+    name: "选题与研究问题"
+    empirical_weight: 0.10
+    theoretical_weight: 0.10
+    spec_ref: "P3-P11, P21-P32"
+    criteria:
+      - "题目一般不超过20字，且与正文内容一致。"
+      - "引言包含研究背景、问题提出、目的意义，避免与摘要重复。"
+      - "研究问题清晰，研究价值和边际贡献明确。"
+      - "避免国内首创、填补空白等夸张自我评语。"
+
+  - id: "D2"
+    name: "参考文献与学术规范"
+    empirical_weight: 0.15
+    theoretical_weight: 0.15
+    spec_ref: "P123-P125"
+    criteria:
+      - "参考文献数量原则上不少于18篇，外文文献不少于3篇。"
+      - "近五年文献占比、期刊类文献占比、学位论文占比合理。"
+      - "正文引用与参考文献列表对应，著录格式统一。"
+      - "文献综述应转述和评述，不应堆砌或复制。"
+
+  - id: "D3"
+    name: "理论分析与研究假设"
+    empirical_weight: 0.10
+    theoretical_weight: 0.10
+    spec_ref: "P63-P64, P83"
+    criteria:
+      - "理论基础与研究主题高度相关，概念边界清晰。"
+      - "实证论文应从理论逻辑推出可检验假设。"
+      - "学理论文应形成清楚的分析框架。"
+      - "避免只罗列概念而缺少因果机制。"
+
+  - id: "D4"
+    name: "研究设计"
+    empirical_weight: 0.15
+    theoretical_weight: 0.10
+    spec_ref: "P65-P68, P89-P103"
+    criteria:
+      - "实证论文说明数据来源、样本筛选、变量定义和模型设定。"
+      - "变量选择应与理论逻辑一致，控制变量有依据。"
+      - "学理论文应体现现状、问题、原因、对策之间的对应关系。"
+      - "研究设计应能支撑论文题目和研究问题。"
+
+  - id: "D5"
+    name: "实证分析"
+    empirical_weight: 0.20
+    theoretical_weight: 0.00
+    spec_ref: "P69-P74"
+    criteria:
+      - "描述性统计、相关性分析、回归结果完整。"
+      - "估计方法与数据结构相匹配，并解释主要系数的经济意义。"
+      - "报告显著性、样本量、模型设定和必要检验。"
+      - "学理论文不适用。"
+
+  - id: "D6"
+    name: "稳健性检验"
+    empirical_weight: 0.10
+    theoretical_weight: 0.00
+    spec_ref: "P74"
+    criteria:
+      - "实证论文应设置稳健性检验章节或等价检验。"
+      - "可采用换指标、换样本、换模型设定等方式。"
+      - "稳健性结果应与主回归方向和解释一致。"
+      - "学理论文不适用。"
+
+  - id: "D7"
+    name: "机制与异质性"
+    empirical_weight: 0.05
+    theoretical_weight: 0.00
+    spec_ref: "规范隐含，V0.5保留为实证增强项"
+    criteria:
+      - "机制检验或作用路径分析应与理论假设对应。"
+      - "异质性分组应有理论理由，不能只做机械分组。"
+      - "检验结果需要解释经济含义和现实含义。"
+      - "学理论文不适用。"
+
+  - id: "D8"
+    name: "结论与对策建议"
+    empirical_weight: 0.05
+    theoretical_weight: 0.45
+    spec_ref: "P75-P76, P101-P106"
+    criteria:
+      - "结论回应研究问题，不超出证据支持范围。"
+      - "对策建议与论文发现或问题原因严格对应。"
+      - "学理论文中问题、原因、对策链条是核心评价点。"
+      - "建议应具体、可操作，避免泛泛表态。"
+
+  - id: "D9"
+    name: "语言与规范"
+    empirical_weight: 0.10
+    theoretical_weight: 0.10
+    spec_ref: "P112-P118, P153"
+    criteria:
+      - "正文不少于8000字，摘要一般300-500字。"
+      - "使用第三人称，术语准确，表达规范。"
+      - "图表编号、表题、表注、来源等规范。"
+      - "包含必要的致谢、摘要、关键词等论文构成要素。"
+
+hard_rules:
+  - id: "H1"
+    name: "题目字数"
+    dimension: "D1"
+    applies_to: ["empirical", "theoretical"]
+    metric: "title_length"
+    max: 20
+    failed_status: "warning"
+    requirement: "不超过20字"
+    spec_ref: "P6"
+  - id: "H2"
+    name: "摘要字数"
+    dimension: "D9"
+    applies_to: ["empirical", "theoretical"]
+    metric: "abstract_length"
+    min: 300
+    max: 500
+    failed_status: "warning"
+    requirement: "300-500字"
+    spec_ref: "P13"
+  - id: "H3"
+    name: "正文字数"
+    dimension: "D9"
+    applies_to: ["empirical", "theoretical"]
+    metric: "body_length"
+    min: 8000
+    failed_status: "warning"
+    requirement: "不少于8000字"
+    spec_ref: "P115"
+  - id: "H4"
+    name: "参考文献数量"
+    dimension: "D2"
+    applies_to: ["empirical", "theoretical"]
+    metric: "references_total"
+    min: 18
+    failed_status: "veto"
+    requirement: "不少于18篇"
+    spec_ref: "P123"
+  - id: "H5"
+    name: "外文文献"
+    dimension: "D2"
+    applies_to: ["empirical", "theoretical"]
+    metric: "foreign_references"
+    min: 3
+    failed_status: "warning"
+    requirement: "不少于3篇"
+    spec_ref: "P123"
+  - id: "H6"
+    name: "第一人称"
+    dimension: "D9"
+    applies_to: ["empirical", "theoretical"]
+    metric: "first_person_count"
+    max: 0
+    failed_status: "warning"
+    requirement: "不使用我、我们等第一人称"
+    spec_ref: "语言规范"
+  - id: "H7"
+    name: "实证论文稳健性"
+    dimension: "D6"
+    applies_to: ["empirical"]
+    metric: "robustness_present"
+    equals: true
+    failed_status: "veto"
+    requirement: "存在稳健性检验或等价检验"
+    spec_ref: "P74"
+  - id: "H8"
+    name: "过度控制"
+    dimension: "D5"
+    applies_to: ["empirical"]
+    review: "manual"
+    requirement: "结合变量定义和因果链人工复核"
+    spec_ref: "方法规范"

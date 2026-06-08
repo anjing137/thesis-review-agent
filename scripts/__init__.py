@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-论文评价工具模块包 (v0.2.2+)
+论文评价工具模块包
 
 统一导出接口
 """
@@ -20,4 +20,4 @@ __all__ = [
     'analyze_xml',
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.6.0"

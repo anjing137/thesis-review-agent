@@ -42,7 +42,7 @@ def stats_from_xml(xml_result: dict) -> Dict:
     chinese_chars_body = xml_result.get("chinese_char_count", 0)
     # 英文词数（正文）
     english_words_body = xml_result.get("english_word_count", 0)
-    # 数字个数（正文）
+    # 数字个数（正文）——按组计数，如"123"算1个数字
     digit_count_body   = xml_result.get("digit_count", 0)
 
     # 字数合计（中文 char + 英文 word + 数字）

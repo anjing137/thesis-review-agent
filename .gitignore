@@ -9,9 +9,8 @@ build/
 # Output / reviews
 reviews/
 
-# Debug & test files
+# Debug files
 debug_*.py
-test_*.py
 review_paper.md
 review_workflow.md
 
