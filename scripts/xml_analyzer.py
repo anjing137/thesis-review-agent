@@ -411,77 +411,23 @@ def _extract_abstract(xml_root: ET.Element, marker_bounds: dict = None) -> dict:
     # ── Marker 边界精确路径 ──────────────────────────────────────────────────
     if marker_bounds and marker_bounds.get("abstract_start", -1) >= 0:
         abs_start = marker_bounds["abstract_start"]
-        # 用 non-empty paragraphs 重构文本索引（与 paragraphs 数组完全对齐）
-        parts: List[str] = []
-        for p in all_paragraphs:
-            p_text = "".join(t.text or "" for t in p.findall(f".//{_tag('w:t')}"))
-            if p_text:
-                parts.append(p_text + "\n")
-        marker_full_text = "".join(parts)
-        # 提前构建，使 else 分支也可访问
-        marker_para_starts = [sum(len(x) for x in parts[:i]) for i in range(len(parts) + 1)]
-        marker_abs_end = abs_start + 1000  # fallback 初值
+        full_text, para_starts = _build_text_index(xml_root)
 
-        # 在 marker 文本中重新搜索关键词（因为 marker_bounds["abstract_end"]
-        # 是对含空段落的 full_text 计算的，直接用到 non-empty 重构文本上会有偏差）
-        kw_in_marker = None
-        for pat in [r'^\s*\*\*关键词[：:站][^\n]+', r'^\s*关键词[：:站][^\n]+']:
-            for m in re.finditer(pat, marker_full_text, re.MULTILINE):
-                kw_in_marker = m
-                break
-            if kw_in_marker:
-                break
-
-        # 英文标题段落紧跟关键词行，是摘要的一部分（通常包含英文标题+作者信息）。
-        # 在 marker 文本中定位英文标题段落（找关键词行之后的第一个非中文段落）
-        en_title_start = None
-        if kw_in_marker:
-            search_region = marker_full_text[kw_in_marker.end():kw_in_marker.end() + 200]
-            for m in re.finditer(r'^[^\u4e00-\u9fff\n]{10,}', search_region, re.MULTILINE):
-                en_title_start = kw_in_marker.end() + m.start()  # 全局字符位置
-                break
-
-        # 确定摘要区段落下标范围
-        # 用段落索引（而非字符位置）来避免 bisect 边界偏差
-        # 找关键词段落在 marker_para_starts 中的段落索引
-        kw_para_idx = None
-        for i, ps in enumerate(marker_para_starts[:-1]):
-            # 关键词段落在 ps 到 marker_para_starts[i+1]-1 之间
-            if ps <= kw_in_marker.start() < marker_para_starts[i + 1]:
-                kw_para_idx = i
-                break
-        if kw_para_idx is None:
-            # fallback: 保守取
-            kw_para_idx = len(parts) - 1
-
-        if kw_in_marker:
-            if en_title_start is not None and en_title_start < kw_in_marker.end() + 50:
-                # 英文标题段落紧跟关键词行，一并纳入摘要（取英文标题段落下标）
-                # en_title_start 是英文标题段落的起始字符位置
-                en_para_idx = None
-                for i, ps in enumerate(marker_para_starts[:-1]):
-                    if ps <= en_title_start < marker_para_starts[i + 1]:
-                        en_para_idx = i
-                        break
-                abstract_end_para_idx = en_para_idx if en_para_idx else kw_para_idx + 1
-            else:
-                # 英文标题不在合理范围，以关键词段落为止
-                abstract_end_para_idx = kw_para_idx
-        else:
-            abstract_end_para_idx = len(parts) - 1
-
-        marker_para_starts = [sum(len(x) for x in parts[:i]) for i in range(len(parts) + 1)]
-        start_idx = _char_pos_to_para_idx(abs_start, marker_para_starts)
-        # 不用 marker_abs_end 限制 end_idx：英文摘要可能延伸到关键词行之后很远处。
-        # 状态机会自然在遇到英文关键词时 break。保守取较远的段落范围。
-        end_idx = min(start_idx + 50, len(paragraphs) - 1)
+        # 使用全量段落的索引体系（与 _char_pos_to_para_idx 对齐）
+        start_idx = _char_pos_to_para_idx(abs_start, para_starts)
+        # 保守取较大范围，状态机自行终止
+        end_idx = min(start_idx + 80, len(all_paragraphs) - 1)
 
         # 状态机：DEFAULT → CN_KEYWORDS → EN_ABSTRACT → EN_KEYWORDS → DONE
         state = "DEFAULT"
-        # 记录英文摘要最后一段的下标（用于扩展 end_idx）
-        en_abstract_last_para_idx = None
-        for i in range(start_idx, min(end_idx + 1, len(paragraphs))):
-            text = paragraphs[i]["text"]
+        # 英文摘要终止关键词
+        EN_ABSTRACT_STOP = ["目录", "目次", "引言", "绪论", "Table of Contents",
+                            "一、", "二、", "三、", "四、", "五、", "六、", "七、"]
+
+        for i in range(start_idx, min(end_idx + 1, len(all_paragraphs))):
+            text = "".join(t.text or "" for t in all_paragraphs[i].findall(f".//{_tag('w:t')}")).strip()
+            if not text:
+                continue
 
             # 跳过摘要标题本身
             if re.match(r"^摘\s?要\s*$", text, re.IGNORECASE):
@@ -495,11 +441,12 @@ def _extract_abstract(xml_root: ET.Element, marker_bounds: dict = None) -> dict:
                 state = "CN_KEYWORDS"
                 continue
 
-            # 提取英文关键词（进入 EN_KEYWORDS 状态）
+            # 提取英文关键词（进入 DONE 状态）
             en_kw_match = re.match(r"^(Key words?|Keywords|Key Words)[:：]\s*(.+)", text, re.IGNORECASE)
             if en_kw_match:
                 kw_text = en_kw_match.group(2).strip()
-                english_keywords = [k.strip() for k in re.split(r"[,;:\s]+", kw_text) if k.strip()]
+                # 英文关键词用分号或逗号分隔，词组内部含空格，不能按\s拆
+                english_keywords = [k.strip() for k in re.split(r"[,;]+", kw_text) if k.strip()]
                 state = "DONE"
                 break
 
@@ -522,33 +469,52 @@ def _extract_abstract(xml_root: ET.Element, marker_bounds: dict = None) -> dict:
                 # Abstract 本身（章节标题）→ 跳过
                 if re.match(r"^Abstract$", text, re.IGNORECASE):
                     continue
+                # 目录/正文标题 → 终止英文摘要
+                ns = re.sub(r'\s+', '', text)
+                stopped = False
+                for stop_kw in EN_ABSTRACT_STOP:
+                    if ns.startswith(stop_kw):
+                        state = "DONE"
+                        stopped = True
+                        break
+                if not stopped and re.search(r"^[一二三四五六七八九十0-9]+[、.．。]?\S*\d{1,3}$", ns):
+                    state = "DONE"
+                    stopped = True
+                if stopped:
+                    break
                 # 正式进入英文摘要
                 state = "EN_ABSTRACT"
                 english_abstract_text += text + "\n"
-                en_abstract_last_para_idx = i
 
             elif state == "EN_ABSTRACT":
+                # 英文摘要终止检测
+                ns = re.sub(r'\s+', '', text)
+                stopped = False
+                for stop_kw in EN_ABSTRACT_STOP:
+                    if ns.startswith(stop_kw):
+                        stopped = True
+                        break
+                if not stopped and re.search(r"^[一二三四五六七八九十0-9]+[、.．。]?\S*\d{1,3}$", ns):
+                    stopped = True
+                if stopped:
+                    break
                 # 英文摘要正文
                 english_abstract_text += text + "\n"
-                en_abstract_last_para_idx = i
-
-            elif state == "EN_KEYWORDS":
-                # 不应该到这里，但安全兜底
-                pass
-
-        # 如果英文摘要延续到 end_idx 之后，扩展 end_idx
-        if en_abstract_last_para_idx is not None and en_abstract_last_para_idx > end_idx:
-            end_idx = en_abstract_last_para_idx
 
         # 处理英文摘要：去掉末尾空行
         english_abstract_text = english_abstract_text.strip()
+
+        # 摘要字数：与正文统一逻辑（中文字 + 英文词 + 数字组），不用 len()
+        _cn = len(re.findall(r'[\u4e00-\u9fff]', abstract_text))
+        _en = len(re.findall(r'[a-zA-Z]{3,}', abstract_text))
+        _nm = len(re.findall(r'\d+\.?\d*', abstract_text))
 
         return {
             "abstract": abstract_text.strip(),
             "english_abstract": english_abstract_text.strip(),
             "keywords": keywords,
             "english_keywords": english_keywords,
-            "abstract_length": len(abstract_text.strip()),
+            "abstract_length": _cn + _en + _nm,
             "keyword_count": len(keywords),
             "english_keyword_count": len(english_keywords),
         }
@@ -556,6 +522,10 @@ def _extract_abstract(xml_root: ET.Element, marker_bounds: dict = None) -> dict:
     # ── Fallback：状态机路径（原逻辑） ──────────────────────────────────────
     in_abstract = False
     in_english_abstract = False
+
+    # 英文摘要终止关键词（遇到这些说明已离开英文摘要区）
+    EN_ABSTRACT_STOP = ["目录", "目次", "引言", "绪论", "Table of Contents",
+                        "一、", "二、", "三、", "四、", "五、", "六、", "七、", "八、", "九、", "十、"]
 
     for para in paragraphs:
         text = para["text"]
@@ -580,21 +550,43 @@ def _extract_abstract(xml_root: ET.Element, marker_bounds: dict = None) -> dict:
         en_kw_match = re.match(r"^(Key words?|Keywords|Key Words)[:：]\s*(.+)", text, re.IGNORECASE)
         if en_kw_match:
             kw_text = en_kw_match.group(2).strip()
-            english_keywords = [k.strip() for k in re.split(r"[,;:\s]+", kw_text) if k.strip()]
+            # 英文关键词用分号或逗号分隔，词组内部含空格，不能按\s拆
+            english_keywords = [k.strip() for k in re.split(r"[,;]+", kw_text) if k.strip()]
             in_english_abstract = False
             break
+
+        # 英文摘要终止检测（防止目录/正文被误识别为英文摘要）
+        if in_english_abstract:
+            ns = re.sub(r'\s+', '', text)
+            stopped = False
+            for stop_kw in EN_ABSTRACT_STOP:
+                if ns.startswith(stop_kw):
+                    in_english_abstract = False
+                    stopped = True
+                    break
+            # 也检测目录条目格式（如 "摘要2"、"一、引言4"）
+            if not stopped and re.search(r"^[一二三四五六七八九十0-9a-zA-Z]+[、.．。]?\S*\d{1,3}$", ns):
+                in_english_abstract = False
+                stopped = True
+            if stopped:
+                continue
 
         if in_abstract:
             abstract_text += text + "\n"
         if in_english_abstract:
             english_abstract_text += text + "\n"
 
+    # 摘要字数：与正文统一逻辑（中文字 + 英文词 + 数字组），不用 len()
+    _cn = len(re.findall(r'[\u4e00-\u9fff]', abstract_text))
+    _en = len(re.findall(r'[a-zA-Z]{3,}', abstract_text))
+    _nm = len(re.findall(r'\d+\.?\d*', abstract_text))
+
     return {
         "abstract": abstract_text.strip(),
         "english_abstract": english_abstract_text.strip(),
         "keywords": keywords,
         "english_keywords": english_keywords,
-        "abstract_length": len(abstract_text.strip()),
+        "abstract_length": _cn + _en + _nm,
         "keyword_count": len(keywords),
         "english_keyword_count": len(english_keywords),
     }
@@ -602,7 +594,14 @@ def _extract_abstract(xml_root: ET.Element, marker_bounds: dict = None) -> dict:
 # ── 正文与章节结构提取 ───────────────────────────────────────────────────────
 
 def _heading_level(p_element: ET.Element) -> Optional[int]:
-    """检测段落是否为标题，并返回标题级别（1~3）"""
+    """检测段落是否为标题，并返回标题级别（1~4）
+
+    标题层级编码规范（经管学院统一要求）：
+        一级：一、二、三、……
+        二级：（一）（二）（三）……
+        三级：1. 2. 3. ……
+        四级：(1) (2) (3) ……
+    """
     pStyle = p_element.find(_tag("w:pPr"))
     if pStyle is None:
         return None
@@ -610,18 +609,43 @@ def _heading_level(p_element: ET.Element) -> Optional[int]:
     if style_val is None:
         return None
     style_name = style_val.get(_tag("w:val")) or ""
-    # 标题样式名通常含 Heading/标题/Title
-    m = re.search(r"Heading|标题|一级|二级|三级|Title", style_name, re.IGNORECASE)
-    if not m:
+    # 标准样式名：Heading/标题/Title
+    m = re.search(r"Heading|标题|一级|二级|三级|四级|Title", style_name, re.IGNORECASE)
+    if m:
+        # 尝试从样式名提取级别数字
+        num_m = re.search(r"\d+", style_name)
+        if num_m:
+            lvl = int(num_m.group())
+            if 1 <= lvl <= 6:
+                return lvl
+        return 1
+
+    # 自定义样式编号回退：通过段落文本内容辅助判断
+    # 很多论文模板用自定义样式名（纯数字编号如24、25）代替标准 Heading
+    # 通过文本模式判断是否为章节标题
+    text = "".join(t.text or "" for t in p_element.findall(f".//{_tag('w:t')}")).strip()
+    if not text or len(text) > 80:
         return None
-    # 尝试从样式名提取级别数字
-    num_m = re.search(r"\d+", style_name)
-    if num_m:
-        lvl = int(num_m.group())
-        if 1 <= lvl <= 6:
-            return lvl
-    # 默认 1 级
-    return 1
+
+    # 一级标题：一、xxx / 第一章 / 引言 / 绪论 / 结论
+    # 排除目录条目（末尾带页码，如 "一、 引言4"）
+    if re.match(r"^[一二三四五六七八九十]+[、．.]\s*\S+", text) and not re.search(r"\d{1,3}$", text):
+        return 1
+    if re.match(r"^(引言|绪论|结论|结语|文献综述|理论分析|研究设计|实证分析|结论与建议)\s*$", text):
+        return 1
+    # 二级标题：（一）xxx / (一)xxx
+    if re.match(r"^[（\(][一二三四五六七八九十]+[）\)]\s*\S+", text) and not re.search(r"\d{1,3}$", text):
+        return 2
+    # 三级标题：1. xxx / 1.1 xxx
+    if re.match(r"^\d+\.\d+\s+\S+", text):
+        return 3
+    if re.match(r"^\d+[、．.]\s*\S+", text):
+        return 3
+    # 四级标题：(1) xxx / (2) xxx —— 半角小括号+阿拉伯数字
+    if re.match(r"^\(\d+\)\s*\S+", text):
+        return 4
+
+    return None
 
 
 def _extract_body(xml_root: ET.Element, marker_bounds: dict = None) -> dict:
@@ -641,7 +665,69 @@ def _extract_body(xml_root: ET.Element, marker_bounds: dict = None) -> dict:
     body_started = False
 
     TOC_KEYWORDS = ["目录", "目次", "Table of Contents", "Contents"]
-    STOP_KEYWORDS = ["参考文献", "References", "致谢", "Acknowledgment", "注释", "附录"]
+    STOP_KEYWORDS = ["参考文献", "References", "致谢", "谢辞", "Acknowledgment", "注释", "附录"]
+
+    # 正文首章标题的回退检测模式（当目录退出条件不满足时使用）
+    # 注意：需排除目录条目（末尾带页码，如 "一、 引言4"）
+    BODY_START_PATTERNS = [
+        r"^[一二三四五六七八九十]+[、．.]\s*\S+(?<!\d)$",    # 一、引言 (排除 "一、引言4")
+        r"^第[一二三四五六七八九十]+[章节]\s*\S+",            # 第一章、第二节
+        r"^引言\s*$",                                         # 独立的"引言"
+        r"^绪论\s*$",                                         # 独立的"绪论"
+    ]
+
+    # 自定义标题样式编号映射（常见论文模板样式名 → 标题级别）
+    # 当标准 Heading 检测失败时，用样式名数字映射作为回退
+    CUSTOM_HEADING_STYLES = {
+        "24": 1, "25": 2, "26": 3,  # 本科论文常见自定义样式
+        "1": 1, "2": 2, "3": 3, "4": 4,  # 部分模板
+        "10": 1, "20": 2, "30": 3, "40": 4,  # 部分模板
+    }
+
+    # 基于文本内容的章节标题检测（回退1）
+    # 标题层级编码规范：一级"一、"、二级"（一）"、三级"1."、四级"(1)"
+    TEXT_HEADING_PATTERNS = [
+        (1, r"^[一二三四五六七八九十]+[、．.]\s*\S+(?<!\d)$"),   # 一、引言 (排除目录条目)
+        (2, r"^（[一二三四五六七八九十]+）\s*\S+(?<!\d)$"),      # （一）研究背景
+        (2, r"^\([一二三四五六七八九十]+\)\s*\S+(?<!\d)$"),      # (一)研究背景
+        (3, r"^\d+[、．.]\s*\S+(?<!\d)$"),                       # 1. 理论基础
+        (3, r"^\d+\.\d+\s+\S+"),                                  # 1.1 理论基础
+        (4, r"^\(\d+\)\s*\S+"),                                   # (1) 样本选择
+    ]
+
+    def _detect_heading_from_text(text):
+        """基于文本内容检测章节级别，返回 level 或 None"""
+        for level, pattern in TEXT_HEADING_PATTERNS:
+            if re.match(pattern, text):
+                return level
+        return None
+
+    def _get_heading_level_robust(p_element, text):
+        """鲁棒的标题级别检测：标准检测 + 文本模式 + 自定义样式回退"""
+        lvl = _heading_level(p_element)
+        if lvl is not None:
+            return lvl
+        # 回退1：文本模式检测
+        lvl = _detect_heading_from_text(text)
+        if lvl is not None:
+            return lvl
+        # 回退2：自定义样式编号 + 文本长度辅助判断
+        if text and len(text) < 50:
+            pPr = p_element.find(_tag("w:pPr"))
+            if pPr is not None:
+                pStyle = pPr.find(_tag("w:pStyle"))
+                if pStyle is not None:
+                    style_name = pStyle.get(_tag("w:val")) or ""
+                    if style_name in CUSTOM_HEADING_STYLES:
+                        return CUSTOM_HEADING_STYLES[style_name]
+        return None
+
+    def _detect_heading_from_text(text):
+        """基于文本内容检测章节级别，返回 level 或 None"""
+        for level, pattern in TEXT_HEADING_PATTERNS:
+            if re.match(pattern, text):
+                return level
+        return None
 
     for p in all_paragraphs:
         text = "".join(t.text or "" for t in p.findall(f".//{_tag('w:t')}")).strip()
@@ -677,18 +763,38 @@ def _extract_body(xml_root: ET.Element, marker_bounds: dict = None) -> dict:
                     in_toc = True
                     break
             if in_toc:
+                # 目录条目：点号引导+页码
                 if re.search(r"\.{2,}\s*\d+$", ns):
                     continue
+                # 目录条目：标题+页码（无点号），如 "一、引言4"
+                if re.search(r"^[一二三四五六七八九十0-9a-zA-ZⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+[、.．。]?\S*\d+$", ns):
+                    continue
+                # heading 样式的非目录行 → 退出目录
                 if lvl is not None and not re.search(r"\d+(\.\d+)*\s*.{3,}\d+", ns):
                     in_toc = False
                     body_started = True
-                continue
+                    # 不 continue，当前行是正文首行，进入下面的正文处理
+                else:
+                    # 回退检测：匹配正文首章标题模式
+                    for bp in BODY_START_PATTERNS:
+                        if re.match(bp, text):
+                            in_toc = False
+                            body_started = True
+                            break
+                    if in_toc:
+                        continue
 
         if in_toc:
             ns = re.sub(r'\s+', '', text)
             if re.search(r"^[一二三四五六七八九十0-9a-zA-ZⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+[、.．。]?\S*\d+$", ns):
                 continue
-            in_toc = False
+            # 回退检测：匹配正文首章标题
+            for bp in BODY_START_PATTERNS:
+                if re.match(bp, text):
+                    in_toc = False
+                    break
+            if in_toc:
+                continue
 
         for kw in STOP_KEYWORDS:
             if re.match(rf"^{kw}[\s：:]*$", text, re.IGNORECASE):
@@ -698,10 +804,13 @@ def _extract_body(xml_root: ET.Element, marker_bounds: dict = None) -> dict:
         if not body_started:
             continue
 
-        if lvl is not None and len(text) < 100:
+        # 检测章节标题：优先用 _heading_level，回退到文本模式+自定义样式检测
+        detected_lvl = _get_heading_level_robust(p, text)
+
+        if detected_lvl is not None and len(text) < 100:
             if current_section["title"] or current_section["body"]:
                 sections.append(current_section)
-            current_section = {"level": lvl, "title": text, "body": ""}
+            current_section = {"level": detected_lvl, "title": text, "body": ""}
         else:
             current_section["body"] += text + "\n"
             body_paragraphs.append(text)
@@ -715,7 +824,7 @@ def _extract_body(xml_root: ET.Element, marker_bounds: dict = None) -> dict:
         "char_count": len(full_body),
         "chinese_char_count": len(re.findall(r"[\u4e00-\u9fff]", full_body)),
         "english_word_count": len(re.findall(r"[a-zA-Z]{3,}", full_body)),
-        "digit_count": len(re.findall(r"[0-9]", full_body)),
+        "digit_count": len(re.findall(r"\d+\.?\d*", full_body)),
         "sections": sections,
         "section_count": len(sections),
     }
@@ -801,14 +910,17 @@ def _extract_references(xml_root: ET.Element, marker_bounds: dict = None) -> dic
         start_idx = _char_pos_to_para_idx(ref_start, para_starts)
         end_idx   = _char_pos_to_para_idx(ref_end,   para_starts)
 
+        # para_starts 基于 all_paragraphs（含空段落），需遍历全量段落
         ref_entries = []
-        for i in range(start_idx, min(end_idx + 1, len(paragraphs))):
-            text = paragraphs[i]
+        for i in range(start_idx, min(end_idx + 1, len(all_paragraphs))):
+            text = "".join(t.text or "" for t in all_paragraphs[i].findall(f".//{_tag('w:t')}")).strip()
+            if not text:
+                continue
             # 跳过参考文献标题本身
             if re.match(r"^(参考文献|References)[：:。]*(?<![0-9])$", text, re.IGNORECASE):
                 continue
             # 遇到致谢/附录/后记，停止收集
-            if re.match(r"^(致谢|附录|后记|Acknowledgment)", text):
+            if re.match(r"^(致谢|谢辞|附录|后记|Acknowledgment)", text):
                 break
             ref_entries.append(text)
     else:
@@ -822,7 +934,7 @@ def _extract_references(xml_root: ET.Element, marker_bounds: dict = None) -> dic
                 continue
 
             if in_ref:
-                if re.match(r"^(致谢|附录|后记|Acknowledgment)", text):
+                if re.match(r"^(致谢|谢辞|附录|后记|Acknowledgment)", text):
                     break
                 ref_entries.append(text)
 
@@ -840,7 +952,9 @@ def _extract_references(xml_root: ET.Element, marker_bounds: dict = None) -> dic
         entry_clean = entry.strip()
         if not entry_clean:
             continue
-        if re.match(r"^[a-zA-Z]", entry_clean):
+        # 去掉编号前缀（如 [1]、[6] 等），以便正确识别外文文献
+        entry_no_num = re.sub(r"^\[\d+\]\s*", "", entry_clean)
+        if re.match(r"^[a-zA-Z]", entry_no_num):
             foreign_count += 1
         if re.search(r"\[J\]|学报|期刊", entry_clean):
             journals_count += 1
@@ -885,7 +999,7 @@ def _extract_acknowledgment(xml_root: ET.Element) -> dict:
     ack_entries = []
     in_ack = False
 
-    ACK_KEYWORDS = ["致谢", "Acknowledgment", "致 谢"]
+    ACK_KEYWORDS = ["致谢", "谢辞", "Acknowledgment", "致 谢"]
 
     for text in paragraphs:
         for kw in ACK_KEYWORDS:

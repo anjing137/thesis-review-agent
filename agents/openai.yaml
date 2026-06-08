@@ -1,0 +1,4 @@
+interface:
+  display_name: "本科论文证据链评审"
+  short_description: "基于原文证据链评审经济管理类本科论文并生成加权报告"
+  default_prompt: "使用 $thesis-review-agent 评审这篇经济管理类本科论文，生成可回查证据的结构化评价报告。"
